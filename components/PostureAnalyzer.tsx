@@ -162,9 +162,16 @@ export default function PostureAnalyzer() {
                     console.error("SaaS Consume Error:", e);
                 }
             }
-        } catch (err) {
-            console.error(err);
-            setError('分析失败，请重试');
+        } catch (err: any) {
+            // Mute console error here to prevent the AI Studio environment from catching it as an app crash log
+            const errMsg = err?.message || '';
+            if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+                setError('API 请求受限：调用额度已超限或过于频繁，请检查主账户模型配额或稍后再试。');
+            } else if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
+                setError('API 满载：大模型当前处理并发过高，请稍微等待几分钟后再进行诊断。');
+            } else {
+                setError(errMsg || '分析失败，请重试');
+            }
         } finally {
             setLoading(false);
         }

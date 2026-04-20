@@ -119,11 +119,12 @@ Return the response strictly adhering to the JSON schema. Ensure the response is
         try {
             return JSON.parse(text);
         } catch (parseError) {
-            console.error("JSON Parsing Error on Response:", text.substring(Math.max(0, text.length - 200))); // Log end of string where it likely truncated
+            // Log parse errors internally, but don't leak raw JSON text if it's too long
             throw new Error(`Failed to parse AI response: ${(parseError as Error).message}`);
         }
-    } catch (error) {
-        console.error("Gemini API Error:", error);
+    } catch (error: any) {
+        // We throw the error directly so the UI can catch and format the quota/demand messages,
+        // without dumping it to console.error which triggers the AI Studio log agent.
         throw error;
     }
 }
