@@ -96,7 +96,7 @@ Return the response strictly adhering to the JSON schema. Ensure the response is
 
     try {
         const response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-pro",
             contents: [
                 prompt,
                 { inlineData: { data: base64Image, mimeType: mimeType } }
