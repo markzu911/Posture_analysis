@@ -1,0 +1,6 @@
+{
+  "name": "AI Posture Diagnostics",
+  "description": "Upload a full-body photo to receive AI-powered posture analysis with visual auxiliary lines and a detailed diagnostic report.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}
