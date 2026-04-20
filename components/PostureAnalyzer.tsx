@@ -1,19 +1,25 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import { UploadCloud, Activity, AlertTriangle, CheckCircle, ChevronRight, RefreshCw, Smartphone, MoveRight } from 'lucide-react';
+import { UploadCloud, Activity, AlertTriangle, CheckCircle, ChevronRight, RefreshCw, Smartphone, MoveRight, Download } from 'lucide-react';
 import { analyzePosture } from '@/lib/gemini';
 import { motion, AnimatePresence } from 'motion/react';
+import * as htmlToImage from 'html-to-image';
 
 interface Keypoint { label: string; x: number; y: number; }
 interface AuxLine { label: string; startX: number; startY: number; endX: number; endY: number; color: string; dashed: boolean; }
+interface Dimension { title: string; score: number; severity: string; description: string; advice: string; }
+interface ActionPlan { title: string; description: string; }
+
 interface PostureResult {
     viewType: string;
-    diagnostics: string[];
+    overallScore: number;
+    postureAge: number;
+    postureType: string;
+    dimensions: Dimension[];
+    actionPlans: ActionPlan[];
     keypoints: Keypoint[];
     auxiliaryLines: AuxLine[];
-    report: string;
 }
 
 export default function PostureAnalyzer() {
@@ -31,6 +37,21 @@ export default function PostureAnalyzer() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
+    const reportRef = useRef<HTMLDivElement>(null);
+
+    const handleDownload = async () => {
+        if (!reportRef.current) return;
+        try {
+            const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#FAFAFA' });
+            const link = document.createElement('a');
+            link.download = 'posture-analysis-report.png';
+            link.href = dataUrl;
+            link.click();
+        } catch (err) {
+            console.error("Failed to download image", err);
+            alert("下载失败，请重试");
+        }
+    };
 
     // 1. Launch Stage - Listen for SAAS_INIT
     useEffect(() => {
@@ -220,30 +241,53 @@ export default function PostureAnalyzer() {
         });
     };
 
-    useEffect(() => {
-        if (result) {
-            // Need a tiny delay for the image ref to be ready in some cases (e.g., fast React renders)
-            setTimeout(() => drawOverlay(), 50);
-        }
-    }, [result]);
+    const renderCircularScore = (score: number, size: number = 64) => {
+        const radius = 15.9155;
+        const circumference = 100;
+        const strokeDasharray = `${score} ${circumference - score}`;
+        
+        // Color logic based on reference image (yellowish orange for 60-80, green for high, maybe grey/red for low)
+        let color = "#10B981"; // Green
+        if (score < 80) color = "#F59E0B"; // Yellow
+        if (score < 60) color = "#EF4444"; // Red
+
+        return (
+            <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
+                <svg viewBox="0 0 36 36" className="circular-chart" style={{ width: '100%', height: '100%' }}>
+                    <path
+                        className="circle-bg"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <path
+                        className="circle"
+                        strokeDasharray={strokeDasharray}
+                        style={{ stroke: color }}
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center font-bold text-gray-800" style={{ fontSize: size * 0.35 }}>
+                    {score}
+                </div>
+            </div>
+        );
+    };
 
     return (
-        <div className="flex flex-col h-full w-full p-6 bg-[#0F1115] text-[#E5E7EB] font-sans">
-            <header className="flex justify-between items-center mb-6 border-b border-gray-800 pb-4">
+        <div className="flex flex-col min-h-screen w-full bg-[#F9FAFB] text-gray-800 font-sans p-4 sm:p-8">
+            <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-8 pb-4">
                 <div>
-                    <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                        AligneAI <span className="text-red-500">PRO</span> 
-                        <span className="text-xs font-normal text-gray-500 ml-2">智能姿态诊断系统 v2.4</span>
+                    <h1 className="text-2xl font-bold tracking-tight text-gray-900 flex items-center gap-2">
+                        AligneAI <span className="text-blue-600">PRO</span> 
                     </h1>
-                    <p className="text-xs text-gray-400 mt-1">
-                        全身三维测算 · 高精度骨骼映射 · 毫秒级诊断
+                    <p className="text-sm text-gray-500 mt-1">
+                        智能姿态高精度物理诊断系统
                     </p>
                 </div>
                 {userIntegral !== null && (
-                    <div className="flex gap-3">
-                        <div className="bg-red-900/30 border border-red-500/50 px-3 py-1 rounded-sm text-red-400 text-xs flex items-center">
-                            当前积分: {userIntegral}
-                            {toolRequiredIntegral !== null ? ` (每次消耗 ${toolRequiredIntegral})` : ""}
+                    <div className="flex gap-3 mt-4 sm:mt-0">
+                        <div className="bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full text-blue-700 text-sm flex items-center font-medium shadow-sm">
+                            当前积分: <span className="font-bold ml-1">{userIntegral}</span>
+                            {toolRequiredIntegral !== null ? <span className="text-xs text-blue-500 ml-2">(每次消耗 {toolRequiredIntegral})</span> : ""}
                         </div>
                     </div>
                 )}
@@ -255,7 +299,7 @@ export default function PostureAnalyzer() {
                     animate={{ opacity: 1, y: 0 }}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleDrop}
-                    className="max-w-3xl mx-auto mt-8 relative border-2 border-dashed border-gray-700 bg-gray-800/20 rounded-md p-10 text-center hover:bg-gray-800/40 hover:border-red-500/50 transition-all cursor-pointer group"
+                    className="max-w-3xl mx-auto mt-8 relative border-2 border-dashed border-gray-300 bg-white rounded-2xl p-12 text-center hover:bg-gray-50 hover:border-blue-400 transition-all cursor-pointer shadow-sm group"
                     onClick={() => fileInputRef.current?.click()}
                 >
                     <input 
@@ -265,63 +309,63 @@ export default function PostureAnalyzer() {
                         className="hidden" 
                         onChange={handleFileSelect}
                     />
-                    <div className="mx-auto w-16 h-16 bg-[#1A1D23] border border-gray-700 text-gray-300 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                        <UploadCloud className="w-8 h-8" />
+                    <div className="mx-auto w-20 h-20 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <UploadCloud className="w-10 h-10" />
                     </div>
-                    <h3 className="text-sm font-bold text-gray-200 mb-2 tracking-widest uppercase">点击上传或拖拽图片</h3>
-                    <p className="text-[11px] text-gray-400 mb-6 flex items-center justify-center gap-2">
+                    <h3 className="text-lg font-bold text-gray-800 mb-2">点击上传或拖拽图片</h3>
+                    <p className="text-sm text-gray-500 mb-6 flex items-center justify-center gap-2">
                         <Smartphone className="w-4 h-4"/> 推荐明亮光线、紧身衣物、正面/侧面全身出镜
                     </p>
-                    <div className="flex flex-wrap justify-center gap-3 text-[10px] font-medium text-gray-400">
-                        <span className="bg-black/40 border border-gray-700 px-3 py-1.5 rounded-sm uppercase">加密传输 AES-256</span>
-                        <span className="bg-black/40 border border-gray-700 px-3 py-1.5 rounded-sm uppercase">图像增强 ON</span>
+                    <div className="flex flex-wrap justify-center gap-3 text-xs font-medium text-gray-500">
+                        <span className="bg-gray-100 px-3 py-1.5 rounded-md uppercase">加密传输 AES-256</span>
+                        <span className="bg-gray-100 px-3 py-1.5 rounded-md uppercase">智能节点识别</span>
                     </div>
                 </motion.div>
             )}
 
             {imageStr && !result && (
                 <div className="max-w-xl mx-auto text-center mt-8">
-                    <div className="ai-canvas rounded-lg aspect-auto max-h-[600px] flex items-center justify-center mb-6">
-                        <img src={imageStr} alt="Preview" className="max-h-[600px] object-contain opacity-80" />
+                    <div className="relative rounded-2xl overflow-hidden shadow-lg bg-white p-4 mb-6">
+                        <img src={imageStr} alt="Preview" className="max-h-[500px] w-auto mx-auto object-contain rounded-xl" />
                         
+                        {loading && (
+                            <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center backdrop-blur-sm z-20">
+                                <RefreshCw className="w-8 h-8 animate-spin text-blue-600 mb-4" />
+                                <div className="text-gray-800 font-bold uppercase tracking-widest text-sm">
+                                    深度体态映射分析中...
+                                </div>
+                            </div>
+                        )}
                         {loading && (
                             <motion.div 
                                 initial={{ top: '0%' }}
                                 animate={{ top: '100%' }}
                                 transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                                className="absolute left-0 w-full h-px bg-red-500 shadow-[0_0_8px_#ef4444] z-10"
+                                className="absolute left-0 w-full h-[2px] bg-blue-500 shadow-[0_0_10px_#3b82f6] z-10"
                             />
-                        )}
-                        {loading && (
-                            <div className="absolute inset-0 bg-[#0F1115]/80 flex items-center justify-center backdrop-blur-sm">
-                                <div className="bg-[#1A1D23] border border-gray-700 px-5 py-3 rounded-sm shadow-xl flex items-center gap-3 text-white text-xs font-bold uppercase tracking-widest">
-                                    <RefreshCw className="w-4 h-4 animate-spin text-red-500" />
-                                    深度映射中... 98.4%
-                                </div>
-                            </div>
                         )}
                     </div>
                     
-                    {!loading ? (
-                        <div className="flex gap-3 justify-center">
+                    {!loading && (
+                        <div className="flex gap-4 justify-center">
                             <button 
                                 onClick={() => { setImageStr(null); setError(null); }}
-                                className="px-4 py-2 rounded-sm border border-gray-700 text-gray-300 text-xs font-bold hover:bg-gray-800 transition-colors uppercase tracking-wider"
+                                className="px-6 py-2.5 rounded-full border border-gray-300 text-gray-600 font-medium hover:bg-gray-50 transition-colors shadow-sm"
                             >
                                 重新选择
                             </button>
                             <button 
                                 onClick={startAnalysis}
-                                className="px-6 py-2 rounded-sm bg-white text-black text-xs font-bold hover:bg-gray-200 transition-all flex items-center gap-2 uppercase tracking-wider"
+                                className="px-8 py-2.5 rounded-full bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all flex items-center gap-2 shadow-md"
                             >
                                 <Activity className="w-4 h-4" /> 开始智能诊断
                             </button>
                         </div>
-                    ) : null}
+                    )}
 
                     {error && (
-                        <div className="mt-4 p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-sm text-xs flex items-center justify-center gap-2">
-                            <AlertTriangle className="w-4 h-4"/> {error}
+                        <div className="mt-6 p-4 bg-red-50 border border-red-200 text-red-600 rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm">
+                            <AlertTriangle className="w-5 h-5"/> {error}
                         </div>
                     )}
                 </div>
@@ -331,67 +375,132 @@ export default function PostureAnalyzer() {
                 <motion.div 
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4"
+                    className="flex flex-col gap-8 max-w-5xl mx-auto"
                 >
-                    {/* Visualizer Column */}
-                    <div className="lg:col-span-5 flex flex-col items-center">
-                        <div className="ai-canvas rounded-lg flex flex-col p-3 w-full border border-gray-800">
-                            <h3 className="text-xs font-bold uppercase text-white bg-black/20 p-2 border-b border-gray-800 -mx-3 -mt-3 mb-3 flex items-center justify-between">
-                                <span>{result.viewType === 'FRONT' ? '正面视图 (Front View)' : '侧面视图 (Side View)'}</span>
-                                <span className="text-[10px] text-green-500">AI识别中: 98.4% 匹配度</span>
-                            </h3>
-                            <div className="relative flex-1 bg-black/40 rounded border border-gray-800 overflow-hidden">
-                                <img 
-                                    ref={imageRef} 
-                                    src={imageStr!} 
-                                    alt="Analyzed Posture" 
-                                    className="w-full h-auto max-h-[700px] object-contain block mx-auto opacity-80"
-                                    onLoad={() => drawOverlay()}
-                                />
-                                <canvas 
-                                    ref={canvasRef} 
-                                    className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                                />
-                            </div>
+                    {/* Visualizer and Action Bar */}
+                    <div className="flex flex-col sm:flex-row gap-4 items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                         <div className="flex items-center gap-4">
                             <button 
                                 onClick={() => { setResult(null); setImageStr(null); }}
-                                className="mt-4 w-full py-2 rounded-sm border border-gray-700 text-gray-300 text-xs font-bold hover:bg-gray-800 transition-colors uppercase tracking-wider"
+                                className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
                             >
-                                分析另一张照片
+                                重新分析
                             </button>
-                        </div>
+                            <span className="text-sm text-gray-500 font-medium px-3 py-1 bg-gray-100 rounded-md">
+                                {result.viewType === 'FRONT' ? '正面视图 (Front)' : '侧面视图 (Side)'}
+                            </span>
+                         </div>
+                         <button 
+                            onClick={handleDownload}
+                            className="px-5 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-sm"
+                        >
+                            <Download className="w-4 h-4" /> 导出报告图
+                        </button>
                     </div>
 
-                    {/* Report Column */}
-                    <div className="lg:col-span-7 flex flex-col gap-4">
-                        {/* Highlights */}
-                        <div className="data-card p-4 rounded-r-md">
-                            <div className="metric-label mb-3">核心指标 / AI 诊断结论</div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                {result.diagnostics.map((diag, idx) => (
-                                    <div key={idx} className="flex gap-2 items-start border-l border-gray-700 pl-3">
-                                        <div className="w-5 h-5 bg-red-500/20 text-red-500 flex flex-shrink-0 items-center justify-center rounded text-[10px] font-bold mt-0.5">!</div>
-                                        <h4 className="text-white text-xs font-bold leading-relaxed">{diag}</h4>
+                    <div className="relative rounded-2xl overflow-hidden shadow-lg bg-gray-900 mx-auto max-w-2xl w-full border-4 border-gray-200">
+                        <img 
+                            ref={imageRef} 
+                            src={imageStr!} 
+                            alt="Analyzed Posture" 
+                            className="w-full h-auto max-h-[600px] object-contain block mx-auto opacity-70"
+                            onLoad={() => drawOverlay()}
+                        />
+                        <canvas 
+                            ref={canvasRef} 
+                            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                        />
+                    </div>
+
+                    <div ref={reportRef} className="flex flex-col gap-8 bg-[#F9FAFB] p-2 sm:p-8 rounded-3xl">
+                        
+                        {/* Top Overview Cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Score & Age Card */}
+                            <div className="report-container p-8 flex divide-x divide-gray-100">
+                                <div className="flex-1 flex flex-col items-center justify-center">
+                                    <div className="text-gray-500 text-sm font-medium mb-2">总体分数</div>
+                                    <div className="flex items-baseline">
+                                        <span className="text-5xl score-text text-gray-900">{result.overallScore}</span>
+                                        <span className="text-xl text-gray-400 ml-1">/100</span>
                                     </div>
-                                ))}
-                                {result.diagnostics.length === 0 && (
-                                    <div className="bg-green-900/10 border-l border-green-500 p-3 col-span-2">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-5 h-5 bg-green-500/20 text-green-500 flex items-center justify-center rounded text-[10px] font-bold">✓</div>
-                                            <h4 className="text-white text-xs font-bold">体态良好，未发现明显异常</h4>
-                                        </div>
+                                </div>
+                                <div className="flex-1 flex flex-col items-center justify-center">
+                                    <div className="text-gray-500 text-sm font-medium mb-2">体态年龄</div>
+                                    <div className="flex items-baseline">
+                                        <span className="text-4xl score-text text-gray-900">{result.postureAge}</span>
+                                        <span className="text-lg text-gray-400 ml-2">岁</span>
                                     </div>
-                                )}
+                                </div>
+                            </div>
+                            
+                            {/* Title Card */}
+                            <div className="report-container p-8 flex flex-col items-center justify-center text-center">
+                                <div className="text-gray-500 text-sm font-medium mb-3 tracking-widest">检测体质</div>
+                                <h2 className="text-3xl font-bold text-gray-900 leading-tight">
+                                    {result.postureType.split(' ').map((line, i) => (
+                                        <React.Fragment key={i}>
+                                            {line}
+                                            <br className="hidden sm:block" />
+                                        </React.Fragment>
+                                    ))}
+                                    {result.postureType.includes(' ') ? null : result.postureType}
+                                </h2>
                             </div>
                         </div>
 
-                        {/* Detailed Markdown Report */}
-                        <div className="bg-gray-800/30 border border-gray-700 rounded-md p-4 flex-1 overflow-auto">
-                            <div className="text-xs font-bold text-gray-300 mb-3 uppercase tracking-widest">综合评估与矫正建议 / Detailed Assessment</div>
-                            <div className="prose prose-invert prose-sm max-w-none prose-headings:text-gray-200 prose-headings:font-bold prose-headings:border-b prose-headings:border-gray-800 prose-headings:pb-2 prose-a:text-red-400 prose-p:text-[11px] prose-p:text-gray-400 prose-li:text-[11px] prose-li:text-gray-400">
-                                <ReactMarkdown>{result.report}</ReactMarkdown>
+                        {/* Multi-dimensional Analysis */}
+                        <div className="report-container p-6 sm:p-10">
+                            <h3 className="text-2xl font-bold text-center text-gray-900 mb-10">多维分析报告</h3>
+                            
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-10">
+                                {result.dimensions.map((dim, idx) => (
+                                    <div key={idx} className="flex gap-4">
+                                        <div className="mt-1">
+                                            {renderCircularScore(dim.score, 64)}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <h4 className="text-base font-bold text-gray-900">{dim.title}</h4>
+                                                <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-[11px] rounded-sm tracking-wider">
+                                                    {dim.severity}
+                                                </span>
+                                            </div>
+                                            <p className="text-sm text-gray-600 leading-relaxed mb-4">
+                                                {dim.description}
+                                            </p>
+                                            
+                                            <div className="bg-[#FFF8F0] border border-[#FDE0C4] rounded-lg p-3 relative">
+                                                <div className="text-sm text-[#876A47] leading-relaxed">
+                                                    <span className="font-bold text-[#D97706]">康复建议：</span>
+                                                    {dim.advice}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
+
+                        {/* Action Plan Section */}
+                        <div className="bg-[#2D2A26] rounded-3xl p-8 sm:p-12 text-[#E5E5E5] shadow-xl mt-4">
+                            <div className="flex items-center gap-3 mb-10">
+                                <Activity className="w-6 h-6 text-[#D97706]" />
+                                <h3 className="text-2xl font-medium tracking-wide">专属康复方案</h3>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {result.actionPlans.map((plan, idx) => (
+                                    <div key={idx} className="bg-[#3D3A36] p-6 rounded-xl border border-gray-700/50 hover:bg-[#45423E] transition-colors">
+                                        <h4 className="text-base font-bold text-white mb-3 tracking-wide">{plan.title}</h4>
+                                        <p className="text-sm text-gray-400 leading-relaxed">
+                                            {plan.description}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
                     </div>
                 </motion.div>
             )}

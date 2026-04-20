@@ -20,20 +20,48 @@ export async function analyzePosture(base64Image: string, mimeType: string, saas
     ${extraContext ? `### ADDITIONAL REQUIREMENTS FROM SAAS\n${extraContext}\nPlease incorporate these specific subjects and keywords into your report analysis style, content, or focus areas appropriately.\n` : ""}
 
 1. Determine if the photo is a FRONT or SIDE view.
-2. Accurately identify key posture landmarks (strictly limit to 10-15 keypoints like Ear, Shoulder C-spine, Greater Trochanter/Hip, Knee, Lateral Malleolus/Ankle).
-3. Determine posture deviations like Head Forward Posture, Rounded Shoulders, Anterior/Posterior Pelvic Tilt, Knee Hyperextension, Uneven Shoulders, etc.
-4. Estimate the degree of the deviation where relevant (e.g., "骨盆前倾约 15°", "头前伸约 3cm").
-5. Generate normalized coordinates (0.0 to 1.0) for drawing keypoints.
-6. Generate normalized coordinates (0.0 to 1.0) for drawing auxiliary lines. ALWAYS generate an ideal plumb line (from ankle up) and lines showing actual deviation. Make deviation lines RED (#ef4444). (Limit to max 10 lines total).
-7. Provide a CONCISE diagnostic report in Chinese (Markdown format, max 500 words) explaining the findings, potential long-term health risks, and brief corrective recommendations.
+2. Evaluate the overall posture and calculate an Overall Score (0-100).
+3. Estimate a "Posture Age" (body physiological age based on structural health).
+4. Identify the main posture type (e.g., 骨盆前倾倾向体态, 颈椎曲度变直, 良好体态).
+5. Conduct a MULTI-DIMENSIONAL analysis. Analyze at least 6-8 different bodily dimensions thoroughly (e.g., 颈部前倾度, 肩膀平齐度, 脊柱生理弯曲, 骨盆倾角, 膝关节/小腿生理形态, 足弓/踝关节状态, 身体重心平衡等). For each, provide a score, severity, description, and advice.
+6. Provide specific, tailored action plans for rehabilitation.
+7. Accurately identify key posture landmarks (strictly limit to 10-15 keypoints like Ear, Shoulder C-spine, Greater Trochanter/Hip, Knee, Lateral Malleolus/Ankle). Generate normalized coordinates (0.0 to 1.0) and labels.
+8. Generate normalized coordinates (0.0 to 1.0) for drawing auxiliary lines. ALWAYS generate an ideal plumb line (from ankle up) and lines showing actual deviation. Make deviation lines RED (#ef4444). (Limit to max 10 lines total).
 
-Return the response strictly adhering to the JSON schema. IMPORTANT: Keep the response compact to avoid truncation limits.`;
+Return the response strictly adhering to the JSON schema. Ensure the response is in Chinese and highly professional. Limit text length appropriately to avoid token truncation.`;
 
     const responseSchema = {
         type: Type.OBJECT,
         properties: {
             viewType: { type: Type.STRING, description: "FRONT or SIDE photo view." },
-            diagnostics: { type: Type.ARRAY, description: "List of top 3-5 findings in Chinese", items: { type: Type.STRING } },
+            overallScore: { type: Type.INTEGER, description: "Overall posture score 0-100" },
+            postureAge: { type: Type.INTEGER, description: "Estimated posture age" },
+            postureType: { type: Type.STRING, description: "Primary posture classification" },
+            dimensions: {
+                type: Type.ARRAY,
+                description: "6-8 detailed posture analysis dimensions. BE COMPREHENSIVE.",
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "Dimension name, e.g., 头部前伸度, 骨盆倾斜评估" },
+                        score: { type: Type.INTEGER, description: "Score for this dimension 0-100" },
+                        severity: { type: Type.STRING, description: "Severity label, e.g., 正常, 极轻微, 轻度, 中度, 严重" },
+                        description: { type: Type.STRING, description: "Detailed description of the observation" },
+                        advice: { type: Type.STRING, description: "Specific corrective advice" }
+                    }
+                }
+            },
+            actionPlans: {
+                type: Type.ARRAY,
+                description: "3-4 specific, actionable rehabilitation plans.",
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "Plan name" },
+                        description: { type: Type.STRING, description: "Detailed instruction" }
+                    }
+                }
+            },
             keypoints: {
                 type: Type.ARRAY,
                 description: "Landmarks with normalized x/y (0 to 1). Max 15 items.",
@@ -61,13 +89,9 @@ Return the response strictly adhering to the JSON schema. IMPORTANT: Keep the re
                         dashed: { type: Type.BOOLEAN, description: "true if reference/ideal line, false for actual alignment" }
                     }
                 }
-            },
-            report: {
-                type: Type.STRING,
-                description: "Concise markdown report in Chinese (max 500 words)."
             }
         },
-        required: ["viewType", "diagnostics", "keypoints", "auxiliaryLines", "report"]
+        required: ["viewType", "overallScore", "postureAge", "postureType", "dimensions", "actionPlans", "keypoints", "auxiliaryLines"]
     };
 
     try {
