@@ -196,9 +196,15 @@ export default function PostureAnalyzer() {
 
         // Draw auxiliary lines
         result.auxiliaryLines.forEach(line => {
+            const normalize = (val: number) => val > 1 ? val / 1000 : val;
+            const startX = normalize(line.startX) * w;
+            const startY = normalize(line.startY) * h;
+            const endX = normalize(line.endX) * w;
+            const endY = normalize(line.endY) * h;
+
             ctx.beginPath();
-            ctx.moveTo(line.startX * w, line.startY * h);
-            ctx.lineTo(line.endX * w, line.endY * h);
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
             
             ctx.lineWidth = Math.max(3, w * 0.005);
             ctx.strokeStyle = line.color || '#ef4444';
@@ -218,17 +224,21 @@ export default function PostureAnalyzer() {
                 // background for text
                 const textWidth = ctx.measureText(line.label).width;
                 ctx.fillStyle = 'rgba(15, 17, 21, 0.8)';
-                ctx.fillRect(line.startX * w, line.startY * h - Math.max(16, w * 0.025), textWidth + 10, Math.max(18, w * 0.03));
+                ctx.fillRect(startX, startY - Math.max(16, w * 0.025), textWidth + 10, Math.max(18, w * 0.03));
                 ctx.fillStyle = '#FFFFFF';
-                ctx.fillText(line.label, line.startX * w + 5, line.startY * h - Math.max(4, w * 0.008));
+                ctx.fillText(line.label, startX + 5, startY - Math.max(4, w * 0.008));
             }
         });
 
         // Draw keypoints
         ctx.setLineDash([]);
         result.keypoints.forEach(pt => {
+            const normalize = (val: number) => val > 1 ? val / 1000 : val;
+            const px = normalize(pt.x) * w;
+            const py = normalize(pt.y) * h;
+
             ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, Math.max(4, w * 0.008), 0, 2 * Math.PI);
+            ctx.arc(px, py, Math.max(4, w * 0.008), 0, 2 * Math.PI);
             ctx.fillStyle = '#FFFFFF';
             ctx.fill();
             ctx.lineWidth = 2;
@@ -240,10 +250,10 @@ export default function PostureAnalyzer() {
                 ctx.font = `${Math.max(10, w * 0.015)}px 'Courier New', monospace`;
                 ctx.fillStyle = 'rgba(15, 17, 21, 0.8)';
                 const textWidth = ctx.measureText(pt.label).width;
-                ctx.fillRect(pt.x * w + 10, pt.y * h - 10, textWidth + 8, 16);
+                ctx.fillRect(px + 10, py - 10, textWidth + 8, 16);
                 
                 ctx.fillStyle = '#FFFFFF';
-                ctx.fillText(pt.label, pt.x * w + 14, pt.y * h + 2);
+                ctx.fillText(pt.label, px + 14, py + 2);
             }
         });
     };
