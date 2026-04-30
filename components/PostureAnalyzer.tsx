@@ -22,6 +22,43 @@ interface PostureResult {
     auxiliaryLines: AuxLine[];
 }
 
+const compressImage = (file: File, maxDim = 1920): Promise<{ dataUrl: string, mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new window.Image();
+            img.onload = () => {
+                let { width, height } = img;
+                if (width > maxDim || height > maxDim) {
+                    if (width > height) {
+                        height = Math.round((height * maxDim) / width);
+                        width = maxDim;
+                    } else {
+                        width = Math.round((width * maxDim) / height);
+                        height = maxDim;
+                    }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    reject(new Error("Failed to get canvas context"));
+                    return;
+                }
+                ctx.drawImage(img, 0, 0, width, height);
+                const mimeType = 'image/jpeg';
+                const dataUrl = canvas.toDataURL(mimeType, 0.85);
+                resolve({ dataUrl, mimeType });
+            };
+            img.onerror = () => reject(new Error("Failed to load image. Ensure it is a valid image format."));
+            img.src = event.target?.result as string;
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
+    });
+};
+
 export default function PostureAnalyzer() {
     const [imageStr, setImageStr] = useState<string | null>(null);
     const [mimeType, setMimeType] = useState<string | null>(null);
@@ -98,21 +135,22 @@ export default function PostureAnalyzer() {
         }
     };
 
-    const processFile = (file: File) => {
+    const processFile = async (file: File) => {
         if (!file.type.startsWith('image/')) {
             setError('请上传有效的图片文件');
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const dataUrl = event.target?.result as string;
-            setMimeType(file.type);
+        try {
+            const { dataUrl, mimeType } = await compressImage(file);
+            setMimeType(mimeType);
             setImageStr(dataUrl);
             setResult(null);
             setError(null);
-        };
-        reader.readAsDataURL(file);
+        } catch (error: any) {
+            console.error("Image processing error:", error);
+            setError(error.message || '图片处理失败，请尝试其他格式');
+        }
     };
 
     const startAnalysis = async () => {
