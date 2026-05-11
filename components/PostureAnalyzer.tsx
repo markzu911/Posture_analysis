@@ -22,7 +22,7 @@ interface PostureResult {
     auxiliaryLines: AuxLine[];
 }
 
-const compressImage = (file: File, maxDim = 1920): Promise<{ dataUrl: string, mimeType: string }> => {
+const compressImage = (file: File, maxDim = 1200): Promise<{ dataUrl: string, mimeType: string }> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -46,9 +46,23 @@ const compressImage = (file: File, maxDim = 1920): Promise<{ dataUrl: string, mi
                     reject(new Error("Failed to get canvas context"));
                     return;
                 }
+                
+                // Fill white background for transparent images (e.g. PNG) converting to JPEG
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, width, height);
                 ctx.drawImage(img, 0, 0, width, height);
+                
                 const mimeType = 'image/jpeg';
-                const dataUrl = canvas.toDataURL(mimeType, 0.85);
+                let quality = 0.85;
+                let dataUrl = canvas.toDataURL(mimeType, quality);
+                
+                // Keep reducing quality until the base64 string is well under ~1MB 
+                // (Length of 1,200,000 chars is roughly 900KB)
+                while (dataUrl.length > 1200000 && quality > 0.1) {
+                    quality -= 0.15;
+                    dataUrl = canvas.toDataURL(mimeType, Math.max(0.1, quality));
+                }
+                
                 resolve({ dataUrl, mimeType });
             };
             img.onerror = () => reject(new Error("Failed to load image. Ensure it is a valid image format."));
@@ -215,6 +229,35 @@ export default function PostureAnalyzer() {
         }
     };
 
+    const uploadResultImage = async (canvas: HTMLCanvasElement, img: HTMLImageElement) => {
+        if (!saasData.userId) return;
+
+        // Combine base image and overlay canvas
+        const combinedCanvas = document.createElement('canvas');
+        combinedCanvas.width = canvas.width;
+        combinedCanvas.height = canvas.height;
+        const ctx = combinedCanvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(canvas, 0, 0);
+        
+        const combinedImageData = combinedCanvas.toDataURL('image/jpeg', 0.85);
+
+        try {
+            await fetch('/api/upload/image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: saasData.userId,
+                    base64: combinedImageData
+                })
+            });
+        } catch (e) {
+            console.error("Failed to upload result image to OSS:", e);
+        }
+    };
+
     const drawOverlay = () => {
         const canvas = canvasRef.current;
         const img = imageRef.current;
@@ -294,6 +337,13 @@ export default function PostureAnalyzer() {
                 ctx.fillText(pt.label, px + 14, py + 2);
             }
         });
+
+        // Upload combined image after drawing
+        if (saasData.userId) {
+            setTimeout(() => {
+                uploadResultImage(canvas, img);
+            }, 500);
+        }
     };
 
     const renderCircularScore = (score: number, size: number = 64) => {
