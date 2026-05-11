@@ -63,19 +63,31 @@
 *   **用途**: 统一处理图片上传、图片列表查询和删除；同一套数据同时驱动用户端“我的图片”和管理员端“图片管理”。
 
 #### 1) 上传图片 (`POST /api/upload/image`)
-*   **调用时机**: 参考图上传，或工具生成图片后回写 OSS。
-*   **请求体**: `{ "base64": "data:image/png;base64,...", "userId": "string" }`
+*   **调用时机**: 用户参考图上传，或工具生成图片后回写 OSS。
+*   **图片类型**:
+    * `source = "input"`：用户上传的一张或多张参考图，只上传 OSS 并返回 URL，不写入 `UserImage`。
+    * `source = "result"`：AI 生成后的结果图，上传 OSS 并写入 `UserImage`，会显示在“我的图片”和“图片管理”。不传时默认为 `result`，兼容旧工具。
+*   **请求体**: `{ "base64": "data:image/png;base64,...", "userId": "string", "source": "input" }`
+*   **多图字段**: JSON 可传 `base64s`、`images`、`imageUrls`、`urls` 数组；`multipart/form-data` 可传多个 `files`、`file`、`images`、`image`。
 *   **处理逻辑**:
-    1. 解析 base64 图片。
+    1. 解析 base64、远程 URL 或 multipart 图片。
     2. 生成 OSS 文件名。
     3. 上传到阿里云 OSS。
-    4. 写入 `UserImage` 表。
+    4. 当 `source = "result"` 时写入 `UserImage` 表。
 *   **成功响应**:
     ```json
     {
       "success": true,
+      "source": "input",
+      "savedToRecords": false,
       "url": "https://bucket.oss-cn-shanghai.aliyuncs.com/xxx.png",
-      "fileName": "13800138000_1713139200000.png"
+      "fileName": "13800138000_1713139200000_abc123.png",
+      "images": [
+        {
+          "url": "https://bucket.oss-cn-shanghai.aliyuncs.com/xxx.png",
+          "fileName": "13800138000_1713139200000_abc123.png"
+        }
+      ]
     }
     ```
 
