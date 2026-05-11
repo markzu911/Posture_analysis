@@ -162,19 +162,6 @@ export default function PostureAnalyzer() {
             setResult(null);
             setError(null);
 
-            // Upload input image asynchronously as specified in API_SPEC.md (source: 'input')
-            if (saasData.userId) {
-                fetch('/api/upload/image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        userId: saasData.userId,
-                        base64: dataUrl,
-                        source: 'input'
-                    })
-                }).catch(e => console.error("Failed to upload input image:", e));
-            }
-
         } catch (error: any) {
             console.error("Image processing error:", error);
             setError(error.message || '图片处理失败，请尝试其他格式');

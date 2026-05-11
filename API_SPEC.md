@@ -63,11 +63,11 @@
 *   **用途**: 统一处理图片上传、图片列表查询和删除；同一套数据同时驱动用户端“我的图片”和管理员端“图片管理”。
 
 #### 1) 上传图片 (`POST /api/upload/image`)
-*   **调用时机**: 用户参考图上传，或工具生成图片后回写 OSS。
+*   **调用时机**: 工具生成图片后回写 OSS。
 *   **图片类型**:
-    * `source = "input"`：用户上传的一张或多张参考图，只上传 OSS 并返回 URL，不写入 `UserImage`。
     * `source = "result"`：AI 生成后的结果图，上传 OSS 并写入 `UserImage`，会显示在“我的图片”和“图片管理”。不传时默认为 `result`，兼容旧工具。
-*   **请求体**: `{ "base64": "data:image/png;base64,...", "userId": "string", "source": "input" }`
+    * `source = "input"`：仅用于平台内置工作流临时换取公网 URL，不写入 `UserImage`；第三方工具代理下的用户原图上传不接入主站保存。
+*   **请求体**: `{ "base64": "data:image/png;base64,...", "userId": "string", "source": "result" }`
 *   **多图字段**: JSON 可传 `base64s`、`images`、`imageUrls`、`urls` 数组；`multipart/form-data` 可传多个 `files`、`file`、`images`、`image`。
 *   **处理逻辑**:
     1. 解析 base64、远程 URL 或 multipart 图片。
@@ -78,8 +78,8 @@
     ```json
     {
       "success": true,
-      "source": "input",
-      "savedToRecords": false,
+      "source": "result",
+      "savedToRecords": true,
       "url": "https://bucket.oss-cn-shanghai.aliyuncs.com/xxx.png",
       "fileName": "13800138000_1713139200000_abc123.png",
       "images": [
@@ -94,6 +94,7 @@
 #### 2) 查询图片列表 (`GET /api/upload/image`)
 *   **调用时机**: 用户端“我的图片”或管理员端“图片管理”页面刷新时。
 *   **查询参数**: `userId`, `role`
+*   **保留策略**: 只展示并保留最近 30 天的结果图记录；OSS 桶侧图片生命周期也按 30 天清理。
 *   **权限规则**:
     * `role = 2`：返回所有图片记录。
     * 其他角色：仅返回当前用户自己的图片记录。
