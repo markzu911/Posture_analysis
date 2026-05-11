@@ -229,32 +229,22 @@ export default function PostureAnalyzer() {
         }
     };
 
-    const uploadResultImage = async (canvas: HTMLCanvasElement, img: HTMLImageElement) => {
-        if (!saasData.userId) return;
-
-        // Combine base image and overlay canvas
-        const combinedCanvas = document.createElement('canvas');
-        combinedCanvas.width = canvas.width;
-        combinedCanvas.height = canvas.height;
-        const ctx = combinedCanvas.getContext('2d');
-        if (!ctx) return;
-
-        ctx.drawImage(img, 0, 0);
-        ctx.drawImage(canvas, 0, 0);
-        
-        const combinedImageData = combinedCanvas.toDataURL('image/jpeg', 0.85);
+    const uploadReportImage = async () => {
+        if (!saasData.userId || !reportRef.current) return;
 
         try {
+            const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#FAFAFA' });
+
             await fetch('/api/upload/image', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userId: saasData.userId,
-                    base64: combinedImageData
+                    base64: dataUrl
                 })
             });
         } catch (e) {
-            console.error("Failed to upload result image to OSS:", e);
+            console.error("Failed to upload report image to OSS:", e);
         }
     };
 
@@ -338,10 +328,10 @@ export default function PostureAnalyzer() {
             }
         });
 
-        // Upload combined image after drawing
+        // Upload report image after drawing
         if (saasData.userId) {
             setTimeout(() => {
-                uploadResultImage(canvas, img);
+                uploadReportImage();
             }, 500);
         }
     };
