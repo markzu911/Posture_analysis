@@ -6,14 +6,28 @@ let ai: GoogleGenAI;
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        const { base64Image, mimeType, saasContext, saasPrompt, model = "gemini-2.5-pro" } = body;
+        const { base64Image, imageUrl, mimeType, saasContext, saasPrompt, model = "gemini-2.5-pro" } = body;
 
-        if (!base64Image || !mimeType) {
+        if (!base64Image && !imageUrl) {
             return NextResponse.json({ error: "Missing image data" }, { status: 400 });
+        }
+
+        if (!mimeType) {
+            return NextResponse.json({ error: "Missing mimeType" }, { status: 400 });
         }
 
         if (!ai) {
             ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || "" });
+        }
+
+        let finalBase64 = base64Image;
+        if (imageUrl && !finalBase64) {
+            const imgRes = await fetch(imageUrl);
+            if (!imgRes.ok) {
+                return NextResponse.json({ error: "Failed to download image from URL" }, { status: 400 });
+            }
+            const arrayBuffer = await imgRes.arrayBuffer();
+            finalBase64 = Buffer.from(arrayBuffer).toString('base64');
         }
 
         let extraContext = "";
@@ -109,7 +123,7 @@ Return the response strictly adhering to the JSON schema. Ensure the response is
             model: model,
             contents: [
                 prompt,
-                { inlineData: { data: base64Image, mimeType: mimeType } }
+                { inlineData: { data: finalBase64, mimeType: mimeType } }
             ],
             config: {
                 responseMimeType: "application/json",

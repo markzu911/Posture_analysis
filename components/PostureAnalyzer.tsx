@@ -22,59 +22,38 @@ interface PostureResult {
     auxiliaryLines: AuxLine[];
 }
 
-const compressImage = (file: File, maxDim = 1200): Promise<{ dataUrl: string, mimeType: string }> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const img = new window.Image();
-            img.onload = () => {
-                let { width, height } = img;
-                if (width > maxDim || height > maxDim) {
-                    if (width > height) {
-                        height = Math.round((height * maxDim) / width);
-                        width = maxDim;
-                    } else {
-                        width = Math.round((width * maxDim) / height);
-                        height = maxDim;
-                    }
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                    reject(new Error("Failed to get canvas context"));
-                    return;
-                }
-                
-                // Fill white background for transparent images (e.g. PNG) converting to JPEG
-                ctx.fillStyle = '#FFFFFF';
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(img, 0, 0, width, height);
-                
-                const mimeType = 'image/jpeg';
-                let quality = 0.85;
-                let dataUrl = canvas.toDataURL(mimeType, quality);
-                
-                // Keep reducing quality until the base64 string is well under ~1MB 
-                // (Length of 1,200,000 chars is roughly 900KB)
-                while (dataUrl.length > 1200000 && quality > 0.1) {
-                    quality -= 0.15;
-                    dataUrl = canvas.toDataURL(mimeType, Math.max(0.1, quality));
-                }
-                
-                resolve({ dataUrl, mimeType });
-            };
-            img.onerror = () => reject(new Error("Failed to load image. Ensure it is a valid image format."));
-            img.src = event.target?.result as string;
-        };
-        reader.onerror = () => reject(new Error("Failed to read file"));
-        reader.readAsDataURL(file);
+const uploadToOSS = async (file: File | Blob, source: string, fileName: string, userId: string) => {
+    // 1. Get direct upload token
+    const tokenRes = await fetch('/api/upload/direct-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            userId,
+            source,
+            fileName: fileName,
+            mimeType: file.type || 'image/png',
+            fileSize: file.size
+        })
     });
+    const token = await tokenRes.json();
+    if (!token.success) throw new Error("Failed to get direct token");
+
+    // 2. Direct PUT to OSS
+    await fetch(token.uploadUrl, {
+        method: token.method,
+        headers: token.headers,
+        body: file
+    });
+
+    return { 
+        url: token.url, 
+        objectKey: token.objectKey 
+    };
 };
 
 export default function PostureAnalyzer() {
     const [imageStr, setImageStr] = useState<string | null>(null);
+    const [imageFile, setImageFile] = useState<File | null>(null);
     const [mimeType, setMimeType] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<PostureResult | null>(null);
@@ -156,12 +135,11 @@ export default function PostureAnalyzer() {
         }
 
         try {
-            const { dataUrl, mimeType } = await compressImage(file);
-            setMimeType(mimeType);
-            setImageStr(dataUrl);
+            setMimeType(file.type);
+            setImageStr(URL.createObjectURL(file));
+            setImageFile(file);
             setResult(null);
             setError(null);
-
         } catch (error: any) {
             console.error("Image processing error:", error);
             setError(error.message || '图片处理失败，请尝试其他格式');
@@ -195,8 +173,30 @@ export default function PostureAnalyzer() {
         }
 
         try {
-            const base64Data = imageStr.split(',')[1];
-            const data = await analyzePosture(base64Data, mimeType, saasData.context, saasData.prompt);
+            let finalImageUrl = undefined;
+            let finalBase64: string | null = null;
+
+            // Upload input image directly to OSS if integrated with SaaS
+            if (saasData.userId && imageFile) {
+                try {
+                    const uploadResult = await uploadToOSS(imageFile, 'input', imageFile.name || 'upload.png', saasData.userId);
+                    finalImageUrl = uploadResult.url;
+                } catch (e) {
+                    console.error("Failed to upload via direct-token, fallback to base64", e);
+                }
+            }
+
+            // Fallback to base64 if OSS upload failed or not integrated
+            if (!finalImageUrl && imageFile) {
+                 const reader = new FileReader();
+                 const base64Data = await new Promise<string>((resolve) => {
+                     reader.onload = () => resolve((reader.result as string).split(',')[1]);
+                     reader.readAsDataURL(imageFile);
+                 });
+                 finalBase64 = base64Data;
+            }
+
+            const data = await analyzePosture(finalBase64, mimeType, saasData.context, saasData.prompt, finalImageUrl);
             setResult(data);
 
             // 3. Consume Stage
@@ -235,16 +235,25 @@ export default function PostureAnalyzer() {
 
         try {
             const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#FAFAFA' });
+            
+            const res = await fetch(dataUrl);
+            const blob = await res.blob();
+            
+            // 1. Upload to OSS using direct-token
+            const { objectKey } = await uploadToOSS(blob, 'result', 'posture-report.png', saasData.userId);
 
-            await fetch('/api/upload/image', {
+            // 2. Commit the uploaded image
+            await fetch('/api/upload/commit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userId: saasData.userId,
-                    base64: dataUrl,
-                    source: 'result'
+                    source: 'result',
+                    objectKey: objectKey,
+                    fileSize: blob.size
                 })
             });
+
         } catch (e) {
             console.error("Failed to upload report image to OSS:", e);
         }

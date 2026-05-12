@@ -1,10 +1,11 @@
-export async function analyzePosture(base64Image: string, mimeType: string, saasContext?: string, saasPrompt?: string[]) {
+export async function analyzePosture(base64Image: string | null, mimeType: string, saasContext?: string, saasPrompt?: string[], imageUrl?: string) {
     const res = await fetch("/api/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             model: "gemini-2.5-pro",
             base64Image,
+            imageUrl,
             mimeType,
             saasContext,
             saasPrompt,
