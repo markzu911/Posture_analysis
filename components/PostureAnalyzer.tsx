@@ -22,6 +22,62 @@ interface PostureResult {
     auxiliaryLines: AuxLine[];
 }
 
+function createRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const compressImage = (file: File, maxDim = 1200): Promise<{ dataUrl: string, mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new window.Image();
+            img.onload = () => {
+                let { width, height } = img;
+                if (width > maxDim || height > maxDim) {
+                    if (width > height) {
+                        height = Math.round((height * maxDim) / width);
+                        width = maxDim;
+                    } else {
+                        width = Math.round((width * maxDim) / height);
+                        height = maxDim;
+                    }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    reject(new Error("Failed to get canvas context"));
+                    return;
+                }
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                const mimeType = 'image/jpeg';
+                let quality = 0.85;
+                let dataUrl = canvas.toDataURL(mimeType, quality);
+                
+                while (dataUrl.length > 1200000 && quality > 0.1) {
+                    quality -= 0.15;
+                    dataUrl = canvas.toDataURL(mimeType, Math.max(0.1, quality));
+                }
+                
+                resolve({ dataUrl, mimeType });
+            };
+            img.onerror = () => reject(new Error("Failed to load image. Ensure it is a valid image format."));
+            img.src = event.target?.result as string;
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
+    });
+};
+
 export default function PostureAnalyzer() {
     const [imageStr, setImageStr] = useState<string | null>(null);
     const [imageFile, setImageFile] = useState<File | null>(null);
@@ -39,6 +95,7 @@ export default function PostureAnalyzer() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
     const reportRef = useRef<HTMLDivElement>(null);
+    const requestIdRef = useRef<string>('');
 
     const handleDownload = async () => {
         if (!reportRef.current) return;
@@ -122,6 +179,8 @@ export default function PostureAnalyzer() {
         setLoading(true);
         setError(null);
         setResult(null);
+        
+        requestIdRef.current = createRequestId();
 
         // 2. Verify Stage
         if (saasData.userId && saasData.toolId) {
@@ -145,16 +204,14 @@ export default function PostureAnalyzer() {
 
         try {
             let finalBase64: string | null = null;
+            let finalMimeType = mimeType;
             if (imageFile) {
-                 const reader = new FileReader();
-                 const base64Data = await new Promise<string>((resolve) => {
-                     reader.onload = () => resolve((reader.result as string).split(',')[1]);
-                     reader.readAsDataURL(imageFile);
-                 });
-                 finalBase64 = base64Data;
+                 const compressed = await compressImage(imageFile);
+                 finalBase64 = compressed.dataUrl.split(',')[1];
+                 finalMimeType = compressed.mimeType;
             }
 
-            const data = await analyzePosture(finalBase64, mimeType, saasData.context, saasData.prompt);
+            const data = await analyzePosture(finalBase64, finalMimeType, saasData.context, saasData.prompt);
             setResult(data);
 
             // 3. Consume Stage
@@ -201,7 +258,8 @@ export default function PostureAnalyzer() {
                     userId: saasData.userId,
                     toolId: saasData.toolId,
                     source: 'result',
-                    base64s: [dataUrl]
+                    base64s: [dataUrl],
+                    idempotencyKey: requestIdRef.current
                 })
             });
 
