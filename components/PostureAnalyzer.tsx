@@ -22,35 +22,6 @@ interface PostureResult {
     auxiliaryLines: AuxLine[];
 }
 
-const uploadToOSS = async (file: File | Blob, source: string, fileName: string, userId: string) => {
-    // 1. Get direct upload token
-    const tokenRes = await fetch('/api/upload/direct-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            userId,
-            source,
-            fileName: fileName,
-            mimeType: file.type || 'image/png',
-            fileSize: file.size
-        })
-    });
-    const token = await tokenRes.json();
-    if (!token.success) throw new Error("Failed to get direct token");
-
-    // 2. Direct PUT to OSS
-    await fetch(token.uploadUrl, {
-        method: token.method,
-        headers: token.headers,
-        body: file
-    });
-
-    return { 
-        url: token.url, 
-        objectKey: token.objectKey 
-    };
-};
-
 export default function PostureAnalyzer() {
     const [imageStr, setImageStr] = useState<string | null>(null);
     const [imageFile, setImageFile] = useState<File | null>(null);
@@ -173,21 +144,8 @@ export default function PostureAnalyzer() {
         }
 
         try {
-            let finalImageUrl = undefined;
             let finalBase64: string | null = null;
-
-            // Upload input image directly to OSS if integrated with SaaS
-            if (saasData.userId && imageFile) {
-                try {
-                    const uploadResult = await uploadToOSS(imageFile, 'input', imageFile.name || 'upload.png', saasData.userId);
-                    finalImageUrl = uploadResult.url;
-                } catch (e) {
-                    console.error("Failed to upload via direct-token, fallback to base64", e);
-                }
-            }
-
-            // Fallback to base64 if OSS upload failed or not integrated
-            if (!finalImageUrl && imageFile) {
+            if (imageFile) {
                  const reader = new FileReader();
                  const base64Data = await new Promise<string>((resolve) => {
                      reader.onload = () => resolve((reader.result as string).split(',')[1]);
@@ -196,7 +154,7 @@ export default function PostureAnalyzer() {
                  finalBase64 = base64Data;
             }
 
-            const data = await analyzePosture(finalBase64, mimeType, saasData.context, saasData.prompt, finalImageUrl);
+            const data = await analyzePosture(finalBase64, mimeType, saasData.context, saasData.prompt);
             setResult(data);
 
             // 3. Consume Stage
@@ -231,26 +189,19 @@ export default function PostureAnalyzer() {
     };
 
     const uploadReportImage = async () => {
-        if (!saasData.userId || !reportRef.current) return;
+        if (!saasData.userId || !saasData.toolId || !reportRef.current) return;
 
         try {
             const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#FAFAFA' });
             
-            const res = await fetch(dataUrl);
-            const blob = await res.blob();
-            
-            // 1. Upload to OSS using direct-token
-            const { objectKey } = await uploadToOSS(blob, 'result', 'posture-report.png', saasData.userId);
-
-            // 2. Commit the uploaded image
-            await fetch('/api/upload/commit', {
+            await fetch('/api/upload/save-result', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userId: saasData.userId,
+                    toolId: saasData.toolId,
                     source: 'result',
-                    objectKey: objectKey,
-                    fileSize: blob.size
+                    base64s: [dataUrl]
                 })
             });
 

@@ -71,126 +71,92 @@
     }
     ```
 
-### D. 图片上传/图片列表接口 (`/api/upload/image`)
-*   **用途**: 统一处理图片上传、图片列表查询和删除；同一套数据同时驱动用户端“我的图片”和管理员端“图片管理”。
-*   **大图/无损推荐**: 不要把图片转成 base64 JSON 传给主站或工具代理。优先使用 `POST /api/upload/direct-token` 获取 OSS 直传地址，然后浏览器或 Vercel 工具端直接 `PUT` 原始 `File/Blob` 到 OSS。
+### D. 结果图保存与图片列表接口
+*   **统一规范**: 主站 OSS 只保存工具生成的结果图。用户上传的原图/参考图不要上传到主站 OSS，也不会写入“我的图片”。
+*   **原因**: 用户原图只属于本次生成过程，避免占用 OSS、污染图片记录和带来隐私/生命周期问题；结果图才是用户需要复用、下载、管理的资产。
+*   **唯一标准接口**: 旧工具重构和新工具开发都统一调用 `POST /api/upload/save-result`。不要再让工具直接调用 `/api/upload/direct-token`、`/api/upload/commit` 或 `/api/upload/image`。
+*   **最稳妥输入**: 优先提交“可远程访问的结果图 URL”，由 SaaS 主站后端下载、上传 OSS、写入 `UserImage`。只要这个请求已经到达主站，用户关闭工具页面也不会中断后端保存。
+*   **Blob/File 兼容输入**: 如果结果图只存在于浏览器 Blob/File/base64，也仍然提交到同一个 `/api/upload/save-result`，不要换接口。
 
-#### 1) 上传图片 (`POST /api/upload/image`)
-*   **调用时机**: 工具生成图片后回写 OSS。
-*   **AI Studio + Vercel 工具说明**:
-    * 工具端可以先把用户上传的参考图发给 Gemini，但这类输入图不应该写入主站图片库。
-    * Gemini 返回结果图后，只有完成 `/api/tool/consume` 扣费的结果图才能写入图片记录；无损直传可以先把结果图 `PUT` 到 OSS，再执行 `consume + commit`。
-    * 当工具通过主站 `/ai-tool/{toolId}/...` 代理访问时，主站会在扣费后短时间内识别工具端的 `/api/upload/image` 请求，并把该次上传作为结果图保存。
-*   **图片类型**:
-    * `source = "result"`：AI 生成后的结果图，上传 OSS 并写入 `UserImage`，会显示在“我的图片”和“图片管理”。不传时默认为 `result`，兼容旧工具。
-    * `source = "input"`：仅用于平台内置工作流临时换取公网 URL，不写入 `UserImage`；第三方工具代理下的用户原图上传不接入主站保存。
-*   **请求体**: `{ "base64": "data:image/png;base64,...", "userId": "string", "source": "result" }`
-*   **多图字段**: JSON 可传 `base64s`、`images`、`imageUrls`、`urls` 数组；`multipart/form-data` 可传多个 `files`、`file`、`images`、`image`。
-*   **适用场景**: 小图、旧工具兼容、或结果图已经有公网/临时 URL 时使用。无损大图不要使用 base64 字段。
-*   **处理逻辑**:
-    1. 解析 base64、远程 URL 或 multipart 图片。
-    2. 生成 OSS 文件名。
-    3. 上传到阿里云 OSS。
-    4. 当 `source = "result"` 时写入 `UserImage` 表。
-*   **成功响应**:
-    ```json
-    {
-      "success": true,
-      "source": "result",
-      "savedToRecords": true,
-      "url": "https://bucket.oss-cn-shanghai.aliyuncs.com/xxx.png",
-      "fileName": "13800138000_1713139200000_abc123.png",
-      "images": [
-        {
-          "url": "https://bucket.oss-cn-shanghai.aliyuncs.com/xxx.png",
-          "fileName": "13800138000_1713139200000_abc123.png"
-        }
-      ]
-    }
-    ```
-
-#### 2) 大图直传签名 (`POST /api/upload/direct-token`)
-*   **用途**: 为无损大图生成 OSS 直传地址，图片文件本体不经过主站代理和 Vercel Function body。
-*   **请求体**:
+#### 1) 统一保存结果图 (`POST /api/upload/save-result`)
+*   **用途**: 工具提交生成后的结果图，SaaS 主站后端负责上传 OSS、写入 `UserImage`，让图片出现在用户端“我的图片”和管理员端“图片管理”。
+*   **调用时机**: Gemini/AI 成功生成结果图，并且 `/api/tool/consume` 扣费成功之后。
+*   **方式 A：URL JSON（最推荐）**
     ```json
     {
       "userId": "string",
-      "source": "input",
-      "fileName": "room.png",
-      "mimeType": "image/png",
-      "fileSize": 8388608
+      "toolId": "string",
+      "source": "result",
+      "imageUrls": ["https://your-tool.vercel.app/result/xxx.png"],
+      "idempotencyKey": "generation-request-id"
     }
     ```
-*   **source 说明**:
-    * `input`：用户上传给 Gemini 的参考图，不写入“我的图片”。
-    * `result`：Gemini 生成后的结果图，只是先直传到 OSS；真正写入图片记录要再调用 `/api/upload/commit`。
-*   **成功响应**:
+*   **方式 B：base64 JSON（结果图只有内存数据时使用）**
     ```json
     {
-      "success": true,
-      "method": "PUT",
-      "objectKey": "input/13800138000_1713139200000_abc123.png",
-      "uploadUrl": "https://bucket.oss-cn-shanghai.aliyuncs.com/...",
-      "url": "https://signed-read-url...",
-      "headers": {
-        "Content-Type": "image/png"
-      }
+      "userId": "string",
+      "toolId": "string",
+      "source": "result",
+      "base64s": ["data:image/png;base64,..."],
+      "idempotencyKey": "generation-request-id"
     }
     ```
-*   **工具端上传示例**:
+*   **方式 C：multipart File/Blob（结果图是 Blob/File 时使用）**
     ```javascript
-    const token = await fetch('/api/upload/direct-token', {
+    const formData = new FormData();
+    formData.append('userId', userId);
+    formData.append('toolId', toolId);
+    formData.append('source', 'result');
+    formData.append('idempotencyKey', requestId);
+    resultFiles.forEach((file) => formData.append('files', file));
+
+    const saved = await fetch('/api/upload/save-result', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId,
-        source: 'input',
-        fileName: file.name,
-        mimeType: file.type || 'image/png',
-        fileSize: file.size
-      })
+      body: formData
     }).then((res) => res.json());
-
-    await fetch(token.uploadUrl, {
-      method: token.method,
-      headers: token.headers,
-      body: file
-    });
-
-    // 传给 Gemini 使用 token.url 或 objectKey，不要再传 base64。
     ```
-*   **前置要求**: OSS Bucket 必须配置 CORS，允许工具域名或 `*` 使用 `PUT, GET, HEAD, OPTIONS`，并允许 `Content-Type` 请求头。
-
-#### 3) 直传结果图入库 (`POST /api/upload/commit`)
-*   **用途**: 结果图已通过 `/api/upload/direct-token` 直传到 OSS 后，把该 OSS object 写入 `UserImage`，让它出现在“我的图片”和“图片管理”。
-*   **调用时机**: Gemini 生成成功、结果图已直传 OSS、并且 `/api/tool/consume` 扣费成功之后。通过 `/ai-tool/{toolId}/...` 代理访问时，主站会校验短时扣费标记。
-*   **请求体**:
-    ```json
-    {
-      "userId": "string",
-      "source": "result",
-      "objectKey": "result/13800138000_1713139200000_abc123.png",
-      "fileSize": 8388608
-    }
-    ```
+*   **字段说明**:
+    * `source` 必须是 `result`；`input` 会被拒绝。
+    * `imageUrl`、`image_url`、`imageUrls`、`image_urls`、`url`、`urls` 都可识别，推荐统一用 `imageUrls`。
+    * `base64`、`base64s`、`images`、`imageData`、`imageDatas` 可用于 base64 JSON。
+    * multipart 文件字段支持 `files`、`file`、`images`、`image`、`blob`、`result`、`results`。
+    * `idempotencyKey` 推荐传本次生成请求 ID。网络重试时使用同一个值，主站会尽量复用同一条图片记录，避免重复入库。
+    * 结果图 URL 必须是公网可访问的 `http/https` 图片地址；`localhost`、内网 IP、`.local` 地址会被拒绝，避免隐私和 SSRF 风险。
+    * 支持 `jpeg/jpg/png/webp/gif`，单张结果图最大 50MB。
 *   **成功响应**:
     ```json
     {
       "success": true,
       "source": "result",
       "savedToRecords": true,
+      "recordId": "img_xxx",
       "url": "https://signed-read-url...",
-      "fileName": "result/13800138000_1713139200000_abc123.png"
+      "fileName": "result/sha256-or-random.png",
+      "image": {
+        "recordId": "img_xxx",
+        "url": "https://signed-read-url...",
+        "fileName": "result/sha256-or-random.png",
+        "fileSize": 8388608,
+        "savedToRecords": true
+      },
+      "images": []
     }
     ```
-*   **无损结果图推荐流程**:
-    1. 用户原图：`direct-token(source=input)` → OSS `PUT` → 把返回的 `url` 传给 Gemini。
-    2. Gemini 成功返回结果图 Blob/File。
-    3. 结果图：`direct-token(source=result)` → OSS `PUT`。
-    4. 调用 `/api/tool/consume` 扣费。
-    5. 调用 `/api/upload/commit` 写入图片记录。
+*   **最稳妥流程**:
+    1. 用户原图：只在工具前端/工具后端临时传给 Gemini，不调用主站上传接口，不进主站 OSS。
+    2. AI 成功生成结果图，优先拿公网可访问的结果图 URL；没有 URL 时使用 base64 或 multipart File。
+    3. 调用 `/api/tool/consume` 扣费，主站写入 10 分钟“结果图待保存”标记。
+    4. 立即调用 `/api/upload/save-result`，传 `source: "result"`、结果图数据和 `idempotencyKey`。
+    5. 确认返回 `savedToRecords === true` 和 `recordId` 后，图片记录已经写入 `UserImage`。
+*   **多图要求**:
+    * 多张结果图一次性放进同一个请求提交：URL 用 `imageUrls` 数组，base64 用 `base64s` 数组，multipart 多次 append `files`。
+    * `idempotencyKey` 表示同一次生成任务；数组顺序必须稳定，重试时不要改变顺序。
+    * 主站会按数组逐张保存，返回的 `images` 与提交顺序一致。
+*   **关闭页面说明**:
+    * 请求到达主站之后，主站后端会继续完成下载、上传 OSS、写入记录。
+    * 如果结果图只在浏览器内存里，还没有把 URL 或图片文件发送给主站，用户关闭页面仍然会丢失；这种情况没有后端可以补救。
 
-#### 4) 查询图片列表 (`GET /api/upload/image`)
+#### 2) 查询图片列表 (`GET /api/upload/image`)
 *   **调用时机**: 用户端“我的图片”或管理员端“图片管理”页面刷新时。
 *   **查询参数**: `userId`, `role`
 *   **保留策略**: 只展示并保留最近 30 天的结果图记录；OSS 桶侧图片生命周期也按 30 天清理。
@@ -207,7 +173,7 @@
           "userId": "user_xxx",
           "userName": "谢岐山1",
           "url": "https://signed-url...",
-          "fileName": "13800138000_1713139200000.png",
+          "fileName": "1713139200000_7f3a9c2e1b4d4f6aa8c9d0e1f2a3b4c5.png",
           "fileSize": 3072000,
           "createdAt": "2026-04-15T10:12:38.000Z"
         }
@@ -216,7 +182,7 @@
     }
     ```
 
-#### 5) 删除图片 (`DELETE /api/upload/image`)
+#### 3) 删除图片 (`DELETE /api/upload/image`)
 *   **请求体**: `{ "id": "string", "userId": "string", "role": 1 }`
 *   **处理逻辑**:
     1. 校验权限。
@@ -229,6 +195,9 @@
       "message": "删除成功"
     }
     ```
+
+#### 4) 平台内部兼容接口
+`/api/upload/direct-token`、`/api/upload/commit`、`/api/upload/image` 仅保留给未重构的历史工具和平台内部兼容逻辑。旧工具重构后不要再调用这些接口。
 
 ### E. 工作流执行接口 (`/api/coze/workflow`)
 *   **用途**: 调用扣子工作流并在成功后自动保存生成图片。
@@ -261,7 +230,7 @@ AI Studio 工具建议作为独立 Vercel 项目部署。SaaS 主站保存该工
 2.  **全开放访问**: 允许所有来源的 Iframe 嵌入 (`frame-ancestors *`)。
 3.  **大容量支持**: 允许较大体积的 JSON 传输。
 4.  **模型调用留在工具端**: Gemini 请求、重试、模型参数和提示词拼接都在 AI Studio/Vercel 工具端完成。
-5.  **扣费后保存结果图**: `/api/tool/consume` 成功后，主站会给当前 `userId + toolId` 写入一个短时结果图待保存标记；随后工具端上传的结果图才进入主站 OSS 和图片列表。
+5.  **只保存结果图**: 用户上传的原图/参考图不调用主站上传接口，不进入主站 OSS。`/api/tool/consume` 成功后，主站会给当前 `userId + toolId` 写入一个短时结果图待保存标记；随后工具端优先调用 `/api/upload/save-result` 交给主站后端保存结果图。主站只有在保存接口返回 `success: true` 且 `savedToRecords: true` 后才消耗该标记，失败时可以重试。
 
 ### 代理代码参考 (`api/proxy.ts`):
 ```ts
@@ -303,15 +272,18 @@ const proxyRequest = async (req, res, targetPath) => {
 app.post("/api/tool/launch", (req, res) => proxyRequest(req, res, "/api/tool/launch"));
 app.post("/api/tool/verify", (req, res) => proxyRequest(req, res, "/api/tool/verify"));
 app.post("/api/tool/consume", (req, res) => proxyRequest(req, res, "/api/tool/consume"));
+app.post("/api/upload/save-result", (req, res) => proxyRequest(req, res, "/api/upload/save-result"));
 
 // 安全生成接口 (最佳实践)
 app.post("/api/generate", async (req, res) => {
-  const { userId, toolId, imageBase64, mimeType, stylePrompt } = req.body;
+  const { userId, toolId, stylePrompt } = req.body;
 
   // 1. 验证 (后端调用 http://aibigtree.com/api/tool/verify)
   // 2. 生成 (后端调用 AI 服务)
-  // 3. 扣费 (后端调用 http://aibigtree.com/api/tool/consume)
-  // 4. 返回结果
+  // 3. AI 返回可远程访问的结果图 URL
+  // 4. 扣费 (后端调用 http://aibigtree.com/api/tool/consume)
+  // 5. 调用 http://aibigtree.com/api/upload/save-result 保存结果图记录
+  // 6. 返回结果
 });
 
 export default app;
@@ -359,6 +331,7 @@ export default app;
       prompt: ['关键词1', '关键词2'], // 数组形式
       verifyUrl: 'https://api.yoursaas.com/api/tool/verify',
       consumeUrl: 'https://api.yoursaas.com/api/tool/consume',
+      saveResultUrl: 'https://api.yoursaas.com/api/upload/save-result',
       callbackUrl: 'https://api.yoursaas.com/api/tool/consume'
      }, '*');
    };

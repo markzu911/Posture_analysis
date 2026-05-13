@@ -22,9 +22,24 @@ function getCorsHeaders() {
 }
 
 export async function POST(request: Request) {
-  const targetUrl = `${TARGET_BASE_URL}/api/upload/commit`;
+  const targetUrl = `${TARGET_BASE_URL}/api/upload/save-result`;
   
   try {
+    // Check if body is FormData
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      return NextResponse.json(data, { 
+        status: response.status,
+        headers: getCorsHeaders()
+      });
+    }
+
     const body = await request.json();
     const response = await fetch(targetUrl, {
       method: 'POST',
@@ -40,7 +55,7 @@ export async function POST(request: Request) {
       headers: getCorsHeaders()
     });
   } catch (error) {
-    console.error(`Error proxying upload commit POST:`, error);
+    console.error(`Error proxying upload save-result POST:`, error);
     return NextResponse.json({ success: false, error: '代理转发失败' }, { status: 500, headers: getCorsHeaders() });
   }
 }
