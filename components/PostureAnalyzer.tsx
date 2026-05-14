@@ -30,7 +30,7 @@ function createRequestId() {
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const compressImage = (file: File, maxDim = 1200): Promise<{ dataUrl: string, mimeType: string }> => {
+const compressImage = (file: File, maxDim = 1024): Promise<{ dataUrl: string, mimeType: string }> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -63,9 +63,9 @@ const compressImage = (file: File, maxDim = 1200): Promise<{ dataUrl: string, mi
                 let quality = 0.85;
                 let dataUrl = canvas.toDataURL(mimeType, quality);
                 
-                while (dataUrl.length > 1200000 && quality > 0.1) {
+                while (dataUrl.length > 800000 && quality > 0.15) {
                     quality -= 0.15;
-                    dataUrl = canvas.toDataURL(mimeType, Math.max(0.1, quality));
+                    dataUrl = canvas.toDataURL(mimeType, quality);
                 }
                 
                 resolve({ dataUrl, mimeType });
@@ -213,23 +213,6 @@ export default function PostureAnalyzer() {
 
             const data = await analyzePosture(finalBase64, finalMimeType, saasData.context, saasData.prompt);
             setResult(data);
-
-            // 3. Consume Stage
-            if (saasData.userId && saasData.toolId) {
-                try {
-                    const consumeRes = await fetch('/api/tool/consume', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ userId: saasData.userId, toolId: saasData.toolId })
-                    });
-                    const consumeJson = await consumeRes.json();
-                    if (consumeJson.success || consumeJson.valid) {
-                        setUserIntegral(consumeJson.data?.currentIntegral);
-                    }
-                } catch (e) {
-                    console.error("SaaS Consume Error:", e);
-                }
-            }
         } catch (err: any) {
             // Mute console error here to prevent the AI Studio environment from catching it as an app crash log
             const errMsg = err?.message || '';
@@ -251,18 +234,19 @@ export default function PostureAnalyzer() {
         try {
             const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#FAFAFA' });
             
-            await fetch('/api/upload/save-result', {
+            const res = await fetch('/api/save-report', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     userId: saasData.userId,
                     toolId: saasData.toolId,
-                    source: 'result',
-                    base64s: [dataUrl],
-                    idempotencyKey: requestIdRef.current
+                    base64: dataUrl
                 })
             });
-
+            const json = await res.json();
+            if (json.success && json.consumeResult?.currentIntegral !== undefined) {
+                 setUserIntegral(json.consumeResult.currentIntegral);
+            }
         } catch (e) {
             console.error("Failed to upload report image to OSS:", e);
         }
